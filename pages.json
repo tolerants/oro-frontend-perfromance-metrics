@@ -1,0 +1,26 @@
+[
+    {
+        "name": "Homepage",
+        "path": "/"
+    },
+    {
+        "name": "Product Listing",
+        "path": "/navigation-root/products/by-category/industrial"
+    },
+    {
+        "name": "Product Details",
+        "path": "/90-watt-bright-white-led-light-bulb"
+    },
+    {
+        "name": "Shopping List",
+        "path": "/customer/shoppinglist/update/3"
+    },
+    {
+        "name": "Checkout",
+        "path": "/customer/checkout/1"
+    },
+    {
+        "name": "User Dashboard",
+        "path": "/customer/user/dashboard/"
+    }
+]

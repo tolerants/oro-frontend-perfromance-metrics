@@ -1,1 +1,12 @@
+# Dependencies
 /node_modules/
+
+# IDE
+/.idea/
+
+# Reports (generated output)
+*.md
+!README.md
+
+# Package lock
+package-lock.json

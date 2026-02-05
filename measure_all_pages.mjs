@@ -1,17 +1,24 @@
 import puppeteer from 'puppeteer';
 import { startFlow } from 'lighthouse';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const pages = [
-    { name: 'Homepage', url: 'https://127.0.0.1:8000/' },
-    { name: 'Product Listing', url: 'https://127.0.0.1:8000/navigation-root/products/by-category/industrial' },
-    { name: 'Product Details', url: 'https://127.0.0.1:8000/90-watt-bright-white-led-light-bulb' },
-    { name: 'Shopping List', url: 'https://127.0.0.1:8000/customer/shoppinglist/update/3' },
-    { name: 'Checkout', url: 'https://127.0.0.1:8000/customer/checkout/1' },
-    { name: 'User Dashboard', url: 'https://127.0.0.1:8000/customer/user/dashboard/' }
-];
+// Get directory of current script
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const RUNS = 5;
+// Load configuration files
+const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const pagesConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'pages.json'), 'utf8'));
+
+// Build full URLs from base URL and paths
+const pages = pagesConfig.map(p => ({
+    name: p.name,
+    url: `${config.baseUrl}${p.path}`
+}));
+
+const RUNS = config.runs || 5;
 
 async function run() {
     console.log('Launching browser...');
@@ -22,11 +29,11 @@ async function run() {
     const page = await browser.newPage();
 
     console.log('Navigating to login page...');
-    await page.goto('https://127.0.0.1:8000/customer/user/login');
+    await page.goto(`${config.baseUrl}${config.loginPath}`);
 
     console.log('Entering credentials...');
-    await page.type('#userNameSignIn', 'AmandaRCole@example.org');
-    await page.type('#passwordSignIn', 'AmandaRCole@example.org');
+    await page.type('#userNameSignIn', config.credentials.username);
+    await page.type('#passwordSignIn', config.credentials.password);
 
     console.log('Submitting form...');
     await Promise.all([
@@ -65,11 +72,29 @@ async function run() {
                 const blockingJsCount = blockingJsItems.length;
                 const blockingJsSize = blockingJsItems.reduce((acc, item) => acc + (item.totalBytes || 0), 0) / 1024; // KB
 
-                // Calculate Total JS
+                // Get resource summary for all resource types
                 const resourceSummary = audit['resource-summary']?.details?.items || [];
+
+                // Calculate Total JS
                 const scriptResource = resourceSummary.find(r => r.resourceType === 'script') || { requestCount: 0, transferSize: 0 };
                 const totalJsCount = scriptResource.requestCount;
                 const totalJsSize = (scriptResource.transferSize || 0) / 1024; // KB
+
+                // Calculate Total CSS
+                const stylesheetResource = resourceSummary.find(r => r.resourceType === 'stylesheet') || { requestCount: 0, transferSize: 0 };
+                const totalCssCount = stylesheetResource.requestCount;
+                const totalCssSize = (stylesheetResource.transferSize || 0) / 1024; // KB
+
+                // Calculate Total Fonts
+                const fontResource = resourceSummary.find(r => r.resourceType === 'font') || { requestCount: 0, transferSize: 0 };
+                const totalFontCount = fontResource.requestCount;
+                const totalFontSize = (fontResource.transferSize || 0) / 1024; // KB
+
+                // Calculate Total Media (images + media)
+                const imageResource = resourceSummary.find(r => r.resourceType === 'image') || { requestCount: 0, transferSize: 0 };
+                const mediaResource = resourceSummary.find(r => r.resourceType === 'media') || { requestCount: 0, transferSize: 0 };
+                const totalMediaCount = imageResource.requestCount + mediaResource.requestCount;
+                const totalMediaSize = ((imageResource.transferSize || 0) + (mediaResource.transferSize || 0)) / 1024; // KB
 
                 const metrics = {
                     FCP: parseFloat(audit['first-contentful-paint'].numericValue / 1000), // seconds
@@ -82,7 +107,13 @@ async function run() {
                     BlockingJSCount: blockingJsCount,
                     BlockingJSSize: blockingJsSize,
                     TotalJSCount: totalJsCount,
-                    TotalJSSize: totalJsSize
+                    TotalJSSize: totalJsSize,
+                    TotalCSSCount: totalCssCount,
+                    TotalCSSSize: totalCssSize,
+                    TotalFontCount: totalFontCount,
+                    TotalFontSize: totalFontSize,
+                    TotalMediaCount: totalMediaCount,
+                    TotalMediaSize: totalMediaSize
                 };
 
                 allResults[p.name].push(metrics);
@@ -107,16 +138,17 @@ function generateReport(results) {
         if (runs.length === 0) continue;
 
         md += `## ${pageName}\n\n`;
-        md += `| Run | Score | FCP (s) | LCP (s) | TBT (ms) | CLS | SI (s) | TTI (s) | Blocking JS (KB) | Total JS (KB) |\n`;
-        md += `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n`;
+        md += `| Run | Score | FCP (s) | LCP (s) | TBT (ms) | CLS | SI (s) | TTI (s) | Blocking JS # | Blocking JS (KB) | JS # | JS (KB) | CSS # | CSS (KB) | Fonts # | Fonts (KB) | Media # | Media (KB) |\n`;
+        md += `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n`;
 
-        let sumFCP = 0, sumLCP = 0, sumTBT = 0, sumCLS = 0, sumSI = 0, sumScore = 0, sumTTI = 0, sumBlockingJSSize = 0, sumTotalJSSize = 0, sumBlockingJSCount = 0, sumTotalJSCount = 0;
+        let sumFCP = 0, sumLCP = 0, sumTBT = 0, sumCLS = 0, sumSI = 0, sumScore = 0, sumTTI = 0;
+        let sumBlockingJSSize = 0, sumTotalJSSize = 0, sumBlockingJSCount = 0, sumTotalJSCount = 0;
+        let sumTotalCSSSize = 0, sumTotalCSSCount = 0;
+        let sumTotalFontSize = 0, sumTotalFontCount = 0;
+        let sumTotalMediaSize = 0, sumTotalMediaCount = 0;
 
         runs.forEach((r, idx) => {
-            const blockingStr = `${r.BlockingJSCount} / ${r.BlockingJSSize.toFixed(1)}`;
-            const totalStr = `${r.TotalJSCount} / ${r.TotalJSSize.toFixed(1)}`;
-
-            md += `| ${idx + 1} | ${r.Score.toFixed(0)} | ${r.FCP.toFixed(2)} | ${r.LCP.toFixed(2)} | ${r.TBT.toFixed(0)} | ${r.CLS.toFixed(3)} | ${r.SI.toFixed(2)} | ${r.TTI.toFixed(2)} | ${blockingStr} | ${totalStr} |\n`;
+            md += `| ${idx + 1} | ${r.Score.toFixed(0)} | ${r.FCP.toFixed(2)} | ${r.LCP.toFixed(2)} | ${r.TBT.toFixed(0)} | ${r.CLS.toFixed(3)} | ${r.SI.toFixed(2)} | ${r.TTI.toFixed(2)} | ${r.BlockingJSCount} | ${r.BlockingJSSize.toFixed(1)} | ${r.TotalJSCount} | ${r.TotalJSSize.toFixed(1)} | ${r.TotalCSSCount} | ${r.TotalCSSSize.toFixed(1)} | ${r.TotalFontCount} | ${r.TotalFontSize.toFixed(1)} | ${r.TotalMediaCount} | ${r.TotalMediaSize.toFixed(1)} |\n`;
 
             sumFCP += r.FCP;
             sumLCP += r.LCP;
@@ -129,6 +161,12 @@ function generateReport(results) {
             sumTotalJSSize += r.TotalJSSize;
             sumBlockingJSCount += r.BlockingJSCount;
             sumTotalJSCount += r.TotalJSCount;
+            sumTotalCSSSize += r.TotalCSSSize;
+            sumTotalCSSCount += r.TotalCSSCount;
+            sumTotalFontSize += r.TotalFontSize;
+            sumTotalFontCount += r.TotalFontCount;
+            sumTotalMediaSize += r.TotalMediaSize;
+            sumTotalMediaCount += r.TotalMediaCount;
         });
 
         const avg = {
@@ -142,28 +180,29 @@ function generateReport(results) {
             BlockingJSSize: sumBlockingJSSize / runs.length,
             TotalJSSize: sumTotalJSSize / runs.length,
             BlockingJSCount: Math.round(sumBlockingJSCount / runs.length),
-            TotalJSCount: Math.round(sumTotalJSCount / runs.length)
+            TotalJSCount: Math.round(sumTotalJSCount / runs.length),
+            TotalCSSSize: sumTotalCSSSize / runs.length,
+            TotalCSSCount: Math.round(sumTotalCSSCount / runs.length),
+            TotalFontSize: sumTotalFontSize / runs.length,
+            TotalFontCount: Math.round(sumTotalFontCount / runs.length),
+            TotalMediaSize: sumTotalMediaSize / runs.length,
+            TotalMediaCount: Math.round(sumTotalMediaCount / runs.length)
         };
 
-        const avgBlockingStr = `${avg.BlockingJSCount} / ${avg.BlockingJSSize.toFixed(1)}`;
-        const avgTotalStr = `${avg.TotalJSCount} / ${avg.TotalJSSize.toFixed(1)}`;
-
-        md += `| **Average** | **${avg.Score.toFixed(0)}** | **${avg.FCP.toFixed(2)}** | **${avg.LCP.toFixed(2)}** | **${avg.TBT.toFixed(0)}** | **${avg.CLS.toFixed(3)}** | **${avg.SI.toFixed(2)}** | **${avg.TTI.toFixed(2)}** | **${avgBlockingStr}** | **${avgTotalStr}** |\n\n`;
+        md += `| **Average** | **${avg.Score.toFixed(0)}** | **${avg.FCP.toFixed(2)}** | **${avg.LCP.toFixed(2)}** | **${avg.TBT.toFixed(0)}** | **${avg.CLS.toFixed(3)}** | **${avg.SI.toFixed(2)}** | **${avg.TTI.toFixed(2)}** | **${avg.BlockingJSCount}** | **${avg.BlockingJSSize.toFixed(1)}** | **${avg.TotalJSCount}** | **${avg.TotalJSSize.toFixed(1)}** | **${avg.TotalCSSCount}** | **${avg.TotalCSSSize.toFixed(1)}** | **${avg.TotalFontCount}** | **${avg.TotalFontSize.toFixed(1)}** | **${avg.TotalMediaCount}** | **${avg.TotalMediaSize.toFixed(1)}** |\n\n`;
 
         summaryData.push({ name: pageName, ...avg });
     }
 
     md += `## Summary (Averages)\n\n`;
-    md += `| Page | Score | FCP (s) | LCP (s) | TBT (ms) | CLS | SI (s) | TTI (s) | Blocking JS (n/KB) | Total JS (n/KB) |\n`;
-    md += `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n`;
+    md += `| Page | Score | FCP (s) | LCP (s) | TBT (ms) | CLS | SI (s) | TTI (s) | Blocking JS # | Blocking JS (KB) | JS # | JS (KB) | CSS # | CSS (KB) | Fonts # | Fonts (KB) | Media # | Media (KB) |\n`;
+    md += `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n`;
 
     summaryData.forEach(d => {
-        const blk = `${d.BlockingJSCount} / ${d.BlockingJSSize.toFixed(1)}`;
-        const tot = `${d.TotalJSCount} / ${d.TotalJSSize.toFixed(1)}`;
-        md += `| ${d.name} | ${d.Score.toFixed(0)} | ${d.FCP.toFixed(2)} | ${d.LCP.toFixed(2)} | ${d.TBT.toFixed(0)} | ${d.CLS.toFixed(3)} | ${d.SI.toFixed(2)} | ${d.TTI.toFixed(2)} | ${blk} | ${tot} |\n`;
+        md += `| ${d.name} | ${d.Score.toFixed(0)} | ${d.FCP.toFixed(2)} | ${d.LCP.toFixed(2)} | ${d.TBT.toFixed(0)} | ${d.CLS.toFixed(3)} | ${d.SI.toFixed(2)} | ${d.TTI.toFixed(2)} | ${d.BlockingJSCount} | ${d.BlockingJSSize.toFixed(1)} | ${d.TotalJSCount} | ${d.TotalJSSize.toFixed(1)} | ${d.TotalCSSCount} | ${d.TotalCSSSize.toFixed(1)} | ${d.TotalFontCount} | ${d.TotalFontSize.toFixed(1)} | ${d.TotalMediaCount} | ${d.TotalMediaSize.toFixed(1)} |\n`;
     });
 
-    const outputFilename = process.argv[2] || 'performance_report.md';
+    const outputFilename = process.argv[2] || config.outputFilename || 'performance_report.md';
     fs.writeFileSync(outputFilename, md);
     console.log(`Report saved to ${outputFilename}`);
 }

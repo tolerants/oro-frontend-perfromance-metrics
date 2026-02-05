@@ -1,0 +1,10 @@
+{
+    "baseUrl": "https://127.0.0.1:8000",
+    "loginPath": "/customer/user/login",
+    "credentials": {
+        "username": "AmandaRCole@example.org",
+        "password": "AmandaRCole@example.org"
+    },
+    "runs": 5,
+    "outputFilename": "performance_report.md"
+}
